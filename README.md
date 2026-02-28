@@ -1,6 +1,9 @@
 # PSOpenAiToolKit
 
-PSOpenAiToolKit is a PowerShell module for working with the OpenAI Responses API.
+PSOpenAiToolKit is a first-class PowerShell integration and workflow framework for the OpenAI Responses API.
+It helps you build AI-driven automation with native PowerShell tools, streaming responses, tool calling, reasoning controls, and flexible endpoint access.
+
+I designed this to fit a more SDK approach with specialized classes for the instance and subsequent endpoints.
 
 ## Requirements
 
