@@ -4,6 +4,7 @@ PSOpenAiToolKit is a first-class PowerShell integration and workflow framework f
 It helps you build AI-driven automation with native PowerShell tools, streaming responses, tool calling, reasoning controls, and flexible endpoint access.
 
 I designed this to fit a more SDK approach with specialized classes for the instance and subsequent endpoints.
+It is a continued work in progress and I havew merged a lot of code in from a previouse project. This is mostly a refactor but has quickly become a much larger project.
 
 ## Requirements
 
