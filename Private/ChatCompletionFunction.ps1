@@ -1,0 +1,335 @@
+using namespace System.Management.Automation
+
+function New-ChatCompletionFunctionFromHashTable {
+    [CmdletBinding()]
+    [OutputType([System.Collections.Specialized.OrderedDictionary])]
+    param (
+        [Parameter(Mandatory, Position = 0)]
+        [ValidatePattern('^[a-zA-Z0-9_-]{1,64}$')]
+        [string]$Name,
+
+        [Parameter()]
+        [string]$Description,
+
+        [Parameter()]
+        [System.Collections.IDictionary]$ParametersHashTable,
+
+        [Parameter(DontShow)]
+        [string]$ParametersType = 'object'
+    )
+
+    $object = [ordered]@{
+        name = $Name
+    }
+
+    if ($Description) {
+        $object.Add('description', $Description)
+    }
+    if ($ParametersHashTable) {
+        $p = [ordered]@{
+            type = $ParametersType
+        }
+        $p.Add('properties', $ParametersHashTable)
+        $object.Add('parameters', $p)
+    }
+
+    $object
+}
+
+function New-ChatCompletionFunctionFromPSCommand {
+    [CmdletBinding()]
+    [OutputType([System.Collections.Specialized.OrderedDictionary])]
+    param (
+        [Parameter(Mandatory, Position = 0)]
+        [ValidateScript({ (Get-Command $_ -ea Ignore) -is [CommandInfo] })]
+        [string]$Command,
+
+        [Parameter()]
+        [string]$Description,
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string[]]$IncludeParameters,
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string[]]$ExcludeParameters,
+
+        [Parameter()]
+        [string]$ParameterSetName,
+
+        [Parameter()]
+        [switch]$Strict
+    )
+
+    $FunctionDefinition = [ordered]@{}
+    $MandatoryParams = [System.Collections.Generic.List[string]]::new()
+    $ExcludeParamNames = ([Cmdlet]::CommonParameters + [Cmdlet]::OptionalCommonParameters + $ExcludeParameters)
+
+    $CommandInfo = Get-Command $Command
+    if ($null -eq $CommandInfo) {
+        return
+    }
+    if ($CommandInfo -is [AliasInfo]) {
+        $CommandInfo = $CommandInfo.ResolvedCommand
+    }
+    if ($CommandInfo -isnot [CmdletInfo] -and $CommandInfo -isnot [FunctionInfo]) {
+        Write-Error "$Command is not a PowerShell command."
+        return
+    }
+
+    $CommandHelp = Get-Help $CommandInfo -ErrorAction Ignore
+
+    if ($ParameterSetName) {
+        $TargetParameterSet = $CommandInfo.ParameterSets | Where-Object { $_.Name -eq $ParameterSetName }
+        if (-not $TargetParameterSet) {
+            Write-Error "$ParameterSetName does not exist."
+            return
+        }
+    }
+    else {
+        $TargetParameterSet = $CommandInfo.ParameterSets | Where-Object { $_.IsDefault }
+        if (-not $TargetParameterSet) {
+            $TargetParameterSet = $CommandInfo.ParameterSets[0]
+        }
+    }
+
+    $TargetParameters = $TargetParameterSet.Parameters | Where-Object { $_.Name -notin $ExcludeParamNames }
+    if ($IncludeParameters.Count -gt 0) {
+        $TargetParameters = $TargetParameters | Where-Object { $_.Name -in $IncludeParameters }
+    }
+
+    $FunctionDefinition.Add('name', $CommandInfo.Name)
+    if ($Description) {
+        $FunctionDefinition.Add('description', $Description)
+    }
+    elseif ($CommandHelp.description) {
+        $FunctionDefinition.Add('description', (($CommandHelp.description.text -join "`n") -replace "`r", ''))
+    }
+    elseif ($CommandHelp.Synopsis) {
+        $FunctionDefinition.Add('description', ($CommandHelp.Synopsis -replace "`r", ''))
+    }
+
+    if ($Strict) {
+        $FunctionDefinition.Add('strict', $true)
+    }
+
+    $paramHash = [ordered]@{type = 'object' }
+    $props = [ordered]@{}
+    foreach ($param in $TargetParameters) {
+        $isHiddenParam = $false
+        $pName = $param.Name
+        $propHash = ParseParameterType($param.ParameterType)
+
+        # All fields must be required in Structured Outputs
+        if ($param.IsMandatory -or $Strict) {
+            $MandatoryParams.Add($pName)
+        }
+
+        if (-not $param.IsMandatory) {
+            $propHash.'type' = [string[]]@($propHash.'type', 'null')
+        }
+
+        $helpmsg = (($CommandHelp.parameters.parameter | Where-Object { $_.name -eq $pName }).description.text -join "`n") -replace "`r", ''
+        if ([string]::IsNullOrWhiteSpace($helpmsg)) {
+            $helpmsg = [string]$param.HelpMessage
+        }
+        if (-not [string]::IsNullOrWhiteSpace($helpmsg)) {
+            $propHash.Add('description', $helpmsg)
+        }
+
+        foreach ($attr in $param.Attributes) {
+            if ($attr -is [Parameter] -and $attr.DontShow) {
+                $isHiddenParam = $true
+            }
+
+            # Attributes are not yet supported in Structured Outputs
+            if (-not $Strict) {
+                if ($attr -is [ValidatePattern]) {
+                    if ($attr.RegexPattern) { $propHash.pattern = $attr.RegexPattern }
+                }
+                elseif ($attr -is [ValidateCount]) {
+                    $propHash.minItems = $attr.MinLength
+                    $propHash.maxItems = $attr.MaxLength
+                }
+                elseif ($attr -is [ValidateLength]) {
+                    $propHash.minLength = $attr.MinLength
+                    $propHash.maxLength = $attr.MaxLength
+                }
+                elseif ($attr -is [ValidateRange]) {
+                    if ($null -ne $attr.MinRange) { $propHash.minimum = $attr.MinRange }
+                    if ($null -ne $attr.MaxRange) { $propHash.maximum = $attr.MaxRange }
+                }
+                elseif ($attr -is [ValidateSet]) {
+                    $propHash.enum = $attr.ValidValues
+                }
+            }
+        }
+
+        if (-not $isHiddenParam) {
+            $props.Add($pName, $propHash)
+        }
+    }
+    $paramHash.Add('properties', $props)
+    $paramHash.Add('additionalProperties', $false)
+    if ($MandatoryParams.Count -gt 0) {
+        $paramHash.Add('required', $MandatoryParams.ToArray())
+    }
+    $FunctionDefinition.Add('parameters', $paramHash)
+
+    $FunctionDefinition
+}
+
+
+function ParseParameterType {
+    param (
+        [System.Reflection.TypeInfo]$ParameterType
+    )
+
+    if ($null -eq $ParameterType) {
+        return
+    }
+
+    if ($ParameterType.IsArray) {
+        $p = @{
+            type = 'array'
+        }
+        $type = ($ParameterType.FullName -replace '\[\]', '') -as [type]
+        if ($type) {
+            $p.items = ParseParameterType($type)
+        }
+        $p
+    }
+    elseif ($ParameterType -in ([bool], [switch])) {
+        @{
+            type = 'boolean'
+        }
+    }
+    elseif ($ParameterType -in ([int32], [int64], [int16], [bigint])) {
+        @{
+            type = 'integer'
+        }
+    }
+    elseif ($ParameterType -in ([uint32], [uint64], [uint16])) {
+        @{
+            type    = 'integer'
+            minimum = 0
+        }
+    }
+    elseif ($ParameterType -in ([byte])) {
+        @{
+            type    = 'integer'
+            minimum = 0
+            maximum = 255
+        }
+    }
+    elseif ($ParameterType -in ([Single], [double], [decimal])) {
+        @{
+            type = 'number'
+        }
+    }
+    elseif ($ParameterType -eq [string]) {
+        @{
+            type = 'string'
+        }
+    }
+    elseif ($ParameterType.IsEnum) {
+        @{
+            type = 'string'
+            enum = [string[]][enum]::GetValues($ParameterType)
+        }
+    }
+    elseif ($ParameterType -eq [datetime]) {
+        @{
+            type   = 'string'
+            format = 'date-time'
+        }
+    }
+    elseif ($ParameterType -eq [regex]) {
+        @{
+            type   = 'string'
+            format = 'regex'
+        }
+    }
+    elseif ($ParameterType -eq [uri]) {
+        @{
+            type   = 'string'
+            format = 'uri'
+        }
+    }
+    elseif ($ParameterType -eq [guid]) {
+        @{
+            type   = 'string'
+            format = 'uuid'
+        }
+    }
+    elseif ($ParameterType -eq [mailaddress]) {
+        @{
+            type   = 'string'
+            format = 'email'
+        }
+    }
+    elseif ($ParameterType.ImplementedInterfaces -contains [System.Collections.IDictionary]) {
+        @{
+            type = 'object'
+        }
+    }
+    elseif ($ParameterType -is [System.Collections.IDictionary]) {
+        @{
+            type = 'object'
+        }
+    }
+    else {
+        @{
+            type = 'string'
+        }
+    }
+}
+
+function New-ChatCompletionFunction {
+    [OutputType([System.Collections.Specialized.OrderedDictionary])]
+    [CmdletBinding(DefaultParameterSetName = 'PSCommand')]
+    param (
+        # [Parameter(ParameterSetName = 'Manual' , Mandatory, Position = 0)]
+        # [ValidatePattern('^[a-zA-Z0-9_-]{1,64}$')]
+        # [string]$Name,
+
+        [Parameter(ParameterSetName = 'PSCommand' , Mandatory, Position = 0)]
+        [ValidatePattern('^[a-zA-Z0-9_-]{1,64}$')]
+        [ValidateScript({ (Get-Command $_ -ea Ignore) -is [CommandInfo] })]
+        [string]$Command,
+
+        # [Parameter(ParameterSetName = 'Manual')]
+        [Parameter(ParameterSetName = 'PSCommand')]
+        [string]$Description,
+
+        # [Parameter(ParameterSetName = 'Manual')]
+        # [System.Collections.IDictionary]$ParametersHashTable,
+
+        # [Parameter(ParameterSetName = 'Manual', DontShow)]
+        # [string]$ParametersType = 'object',
+
+        [Parameter(ParameterSetName = 'PSCommand')]
+        [ValidateNotNullOrEmpty()]
+        [string[]]$IncludeParameters,
+
+        [Parameter(ParameterSetName = 'PSCommand')]
+        [ValidateNotNullOrEmpty()]
+        [string[]]$ExcludeParameters,
+
+        [Parameter(ParameterSetName = 'PSCommand')]
+        [string]$ParameterSetName,
+
+        [Parameter()]
+        [switch]$Strict
+    )
+
+    # if ($PSCmdlet.ParameterSetName -eq 'Manual') {
+    #     New-ChatCompletionFunctionFromHashTable @PSBoundParameters
+    #     return
+    # }
+    # elseif ($PSCmdlet.ParameterSetName -eq 'PSCommand') {
+    New-ChatCompletionFunctionFromPSCommand @PSBoundParameters
+    return
+    # }
+}
