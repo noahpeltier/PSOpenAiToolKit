@@ -370,6 +370,27 @@ class OpenAiInput {
             }
         )
     }
+
+    OpenAiInput([string]$Role, [object[]]$ContentParts) {
+        if ([string]::IsNullOrWhiteSpace($Role)) {
+            throw "Role is required."
+        }
+
+        if ($null -eq $ContentParts -or $ContentParts.Count -eq 0) {
+            throw "ContentParts is required."
+        }
+
+        $this.role = $Role
+        foreach ($part in $ContentParts) {
+            if ($null -ne $part) {
+                $null = $this.content.Add($part)
+            }
+        }
+
+        if ($this.content.Count -eq 0) {
+            throw "At least one non-null content part is required."
+        }
+    }
 }
 
 class OpenAiTool {
@@ -462,6 +483,11 @@ class OpenAi {
 
     [void] AddUserInput([string]$Text) {
         $message = [OpenAiInput]::new("user", $Text)
+        $null = $this.Body.input.Add($message)
+    }
+
+    [void] AddUserInput([object[]]$ContentParts) {
+        $message = [OpenAiInput]::new("user", $ContentParts)
         $null = $this.Body.input.Add($message)
     }
 
@@ -1176,6 +1202,16 @@ class OpenAi {
         return $this.GetRawResponse()
     }
 
+    [object] GetRawResponse([object[]]$ContentParts) {
+        $this.AddUserInput($ContentParts)
+        return $this.GetRawResponse()
+    }
+
+    [object] GetRawResponseFromContentParts([object[]]$ContentParts) {
+        $this.AddUserInput($ContentParts)
+        return $this.GetRawResponse()
+    }
+
     [string] GetResponse() {
         $response = $this.GetRawResponse()
         return $this.GetOutputText($response)
@@ -1183,6 +1219,16 @@ class OpenAi {
 
     [string] GetTextResponse([string]$Text) {
         $response = $this.GetRawResponse($Text)
+        return $this.GetOutputText($response)
+    }
+
+    [string] GetTextResponse([object[]]$ContentParts) {
+        $response = $this.GetRawResponse($ContentParts)
+        return $this.GetOutputText($response)
+    }
+
+    [string] GetTextResponseFromContentParts([object[]]$ContentParts) {
+        $response = $this.GetRawResponseFromContentParts($ContentParts)
         return $this.GetOutputText($response)
     }
 
@@ -1214,6 +1260,16 @@ class OpenAi {
         return $this.GetRawResponseStream($OnDelta, $OnEvent, $IncludeObfuscation)
     }
 
+    [object] GetRawResponseStream([object[]]$ContentParts, [scriptblock]$OnDelta, [scriptblock]$OnEvent, [bool]$IncludeObfuscation) {
+        $this.AddUserInput($ContentParts)
+        return $this.GetRawResponseStream($OnDelta, $OnEvent, $IncludeObfuscation)
+    }
+
+    [object] GetRawResponseStreamFromContentParts([object[]]$ContentParts, [scriptblock]$OnDelta, [scriptblock]$OnEvent, [bool]$IncludeObfuscation) {
+        $this.AddUserInput($ContentParts)
+        return $this.GetRawResponseStream($OnDelta, $OnEvent, $IncludeObfuscation)
+    }
+
     [string] GetResponseStream([scriptblock]$OnDelta, [scriptblock]$OnEvent, [bool]$IncludeObfuscation) {
         $response = $this.GetRawResponseStream($OnDelta, $OnEvent, $IncludeObfuscation)
         return $this.GetOutputText($response)
@@ -1236,6 +1292,56 @@ class OpenAi {
         }.GetNewClosure()
 
         $response = $this.GetRawResponseStream($Text, $captureDelta, $OnEvent, $IncludeObfuscation)
+        $streamedText = $textBuilder.ToString()
+        if (-not [string]::IsNullOrEmpty($streamedText)) {
+            return $streamedText
+        }
+
+        return $this.GetOutputText($response)
+    }
+
+    [string] GetTextResponseStream([object[]]$ContentParts, [scriptblock]$OnDelta, [scriptblock]$OnEvent, [bool]$IncludeObfuscation) {
+        $textBuilder = [System.Text.StringBuilder]::new()
+        $userOnDelta = $OnDelta
+
+        $captureDelta = {
+            param($delta, $eventObject)
+
+            if (-not [string]::IsNullOrEmpty($delta)) {
+                $null = $textBuilder.Append($delta)
+            }
+
+            if ($userOnDelta) {
+                & $userOnDelta $delta $eventObject
+            }
+        }.GetNewClosure()
+
+        $response = $this.GetRawResponseStream($ContentParts, $captureDelta, $OnEvent, $IncludeObfuscation)
+        $streamedText = $textBuilder.ToString()
+        if (-not [string]::IsNullOrEmpty($streamedText)) {
+            return $streamedText
+        }
+
+        return $this.GetOutputText($response)
+    }
+
+    [string] GetTextResponseStreamFromContentParts([object[]]$ContentParts, [scriptblock]$OnDelta, [scriptblock]$OnEvent, [bool]$IncludeObfuscation) {
+        $textBuilder = [System.Text.StringBuilder]::new()
+        $userOnDelta = $OnDelta
+
+        $captureDelta = {
+            param($delta, $eventObject)
+
+            if (-not [string]::IsNullOrEmpty($delta)) {
+                $null = $textBuilder.Append($delta)
+            }
+
+            if ($userOnDelta) {
+                & $userOnDelta $delta $eventObject
+            }
+        }.GetNewClosure()
+
+        $response = $this.GetRawResponseStreamFromContentParts($ContentParts, $captureDelta, $OnEvent, $IncludeObfuscation)
         $streamedText = $textBuilder.ToString()
         if (-not [string]::IsNullOrEmpty($streamedText)) {
             return $streamedText

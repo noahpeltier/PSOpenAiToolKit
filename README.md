@@ -1,10 +1,6 @@
 # PSOpenAiToolKit
 
-PSOpenAiToolKit is a first-class PowerShell integration and workflow framework for the OpenAI Responses API.
-It helps you build AI-driven automation with native PowerShell tools, streaming responses, tool calling, reasoning controls, and flexible endpoint access.
-
-I designed this to follow a more SDK style approach, with specialized classes for the instance and subsequent endpoints.
-It is a continued work in progress, and I have merged a lot of code from a previous project. This is mostly a refactor but has quickly become a much larger project.
+PSOpenAiToolKit is a PowerShell module for working with the OpenAI Responses API.
 
 ## Requirements
 
@@ -20,7 +16,7 @@ Import-Module .\PSOpenAiToolKit.psd1 -Force
 ## Core Commands
 
 - Session: `New-Ai`, `Get-Ai`, `Clear-AiConversation`
-- Responses: `Get-AiResponse`, `Get-AiResponseStream`
+- Responses: `Get-AiResponse`, `Get-AiResponseStream` (text and local image inputs)
 - Tools: `Add-AiTool`, `Get-AiTools`, `Remove-AiTool`, `Register-AiToolHandler`
 - Controls: `Set-AiInstructions`, `Set-AiReasoningEffort`, `Set-AiStoreResponses`, `Set-AiLegacyToolAutoInvoke`
 - Raw API: `Invoke-OpenAiMethod`
@@ -43,6 +39,25 @@ $text = Get-AiResponseStream -Message "Summarize this" -NoLiveText
 
 # Live stream and return final text
 $text = Get-AiResponseStream -Message "Summarize this" -PassThru
+```
+
+## Vision Inputs
+
+```powershell
+# Analyze one local image
+Get-AiResponse -ImagePath ".\images\sample.png" -Message "What do you see?"
+
+# Analyze multiple images
+Get-AiResponse -ImagePath ".\images\a.png", ".\images\b.jpg" -Message "Compare these images"
+
+# Image-only prompt is supported
+Get-AiResponse -ImagePath ".\images\sample.png"
+
+# Streamed vision response
+Get-AiResponseStream -ImagePath ".\images\sample.png" -Message "Describe this image" -PassThru
+
+# Optional image detail hint: auto, low, high
+Get-AiResponse -ImagePath ".\images\sample.png" -ImageDetail low -Message "Quick summary"
 ```
 
 ## Reasoning Effort

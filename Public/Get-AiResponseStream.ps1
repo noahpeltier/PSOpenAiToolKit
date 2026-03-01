@@ -1,8 +1,18 @@
 function Get-AiResponseStream {
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName = "Text")]
     param(
-        [Parameter(ValueFromPipeline)]
+        [Parameter(ParameterSetName = "Text", ValueFromPipeline, Position = 0)]
+        [Parameter(ParameterSetName = "Vision")]
         [string]$Message,
+
+        [Parameter(ParameterSetName = "Vision", Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string[]]$ImagePath,
+
+        [Parameter(ParameterSetName = "Vision")]
+        [ValidateSet("auto", "low", "high")]
+        [string]$ImageDetail = "auto",
+
         [scriptblock]$OnDelta,
         [scriptblock]$OnEvent,
         [switch]$NoLiveText,
@@ -33,7 +43,11 @@ function Get-AiResponseStream {
         $includeObfuscation = $IncludeObfuscation.IsPresent
 
         $resultText = ""
-        if ($PSBoundParameters.ContainsKey("Message")) {
+        if ($PSCmdlet.ParameterSetName -eq "Vision") {
+            $contentParts = New-OpenAiUserContentParts -Message $Message -ImagePath $ImagePath -ImageDetail $ImageDetail
+            $resultText = Invoke-InternalAiVisionTextResponseStream -Ai $script:CurrentAi -ContentParts ([object[]]$contentParts) -OnDelta $forwardDelta -OnEvent $OnEvent -IncludeObfuscation $includeObfuscation
+        }
+        elseif ($PSBoundParameters.ContainsKey("Message")) {
             $resultText = $script:CurrentAi.GetTextResponseStream($Message, $forwardDelta, $OnEvent, $includeObfuscation)
         }
         else {
